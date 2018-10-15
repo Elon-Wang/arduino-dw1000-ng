@@ -55,7 +55,7 @@ uint64_t timeRangeReceived;
 
 // watchdog and reset period
 uint32_t lastActivity;
-uint32_t resetPeriod = 250;
+uint32_t resetPeriod = 250 * 1000;
 // reply times (same on both sides for symm. ranging)
 uint16_t replyDelayTimeUS = 3000;
 // ranging counter (per second)
@@ -136,12 +136,12 @@ void setup() {
     // anchor starts in receiving mode, awaiting a ranging poll message
     receive();
     // for first time ranging frequency computation
-    rangingCountPeriod = millis();
+    rangingCountPeriod = micros();
 }
 
 void noteActivity() {
     // update activity timestamp, so that we do not reach "resetPeriod"
-    lastActivity = millis();
+    lastActivity = micros();
 }
 
 void receive() {
@@ -194,10 +194,10 @@ void transmitRangingConfirm() {
 }
  
 void loop() {
-    int32_t curMillis = millis();
+    int32_t curMicros = micros();
     if (!sentAck && !receivedAck) {
         // check if inactive
-        if (curMillis - lastActivity > resetPeriod) {
+        if (curMicros - lastActivity > resetPeriod) {
             resetInactive();
         }
         return;
@@ -247,9 +247,9 @@ void loop() {
             
             transmitRangingConfirm();
             successRangingCount++;
-            if (curMillis - rangingCountPeriod > 1000) {
-                samplingRate = (1000.0f * successRangingCount) / (curMillis - rangingCountPeriod);
-                rangingCountPeriod = curMillis;
+            if (curMicros - rangingCountPeriod > 1000000) {
+                samplingRate = (1000000.0f * successRangingCount) / (curMicros - rangingCountPeriod);
+                rangingCountPeriod = curMicros;
                 successRangingCount = 0;
             }
             noteActivity();
