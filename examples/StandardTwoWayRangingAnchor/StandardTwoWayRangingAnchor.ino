@@ -53,9 +53,6 @@ uint64_t timePollAckReceived;
 uint64_t timeRangeSent;
 uint64_t timeRangeReceived;
 
-// watchdog and reset period
-uint32_t lastActivity;
-uint32_t resetPeriod = 250 * 1000;
 // reply times (same on both sides for symm. ranging)
 uint16_t replyDelayTimeUS = 3000;
 // ranging counter (per second)
@@ -136,23 +133,10 @@ void setup() {
     // anchor starts in receiving mode, awaiting a ranging poll message
     receive();
     // for first time ranging frequency computation
-    rangingCountPeriod = micros();
-}
-
-void noteActivity() {
-    // update activity timestamp, so that we do not reach "resetPeriod"
-    lastActivity = micros();
 }
 
 void receive() {
     DW1000Ng::startReceive();
-    noteActivity();
-}
- 
-void resetInactive() {
-    // anchor listens for POLL
-    DW1000Ng::forceTRxOff();
-    receive();
 }
 
 void handleSent() {
@@ -194,14 +178,6 @@ void transmitRangingConfirm() {
 }
  
 void loop() {
-    int32_t curMicros = micros();
-    if (!sentAck && !receivedAck) {
-        // check if inactive
-        if (curMicros - lastActivity > resetPeriod) {
-            resetInactive();
-        }
-        return;
-    }
 
     if (sentAck) {
         sentAck = false;
@@ -218,7 +194,6 @@ void loop() {
         if (recv_data[9] == RANGING_TAG_POLL) {
             timePollReceived = DW1000Ng::getReceiveTimestamp();
             transmitResponseToPoll();
-            noteActivity();
             return;
         } 
         
@@ -242,17 +217,9 @@ void loop() {
             
             String rangeString = "Range: "; rangeString += distance; rangeString += " m";
             rangeString += "\t RX power: "; rangeString += DW1000Ng::getReceivePower(); rangeString += " dBm";
-            rangeString += "\t Sampling: "; rangeString += samplingRate; rangeString += " Hz";
             Serial.println(rangeString);
             
             transmitRangingConfirm();
-            successRangingCount++;
-            if (curMicros - rangingCountPeriod > 1000000) {
-                samplingRate = (1000000.0f * successRangingCount) / (curMicros - rangingCountPeriod);
-                rangingCountPeriod = curMicros;
-                successRangingCount = 0;
-            }
-            noteActivity();
             return;
         }
 
@@ -260,7 +227,6 @@ void loop() {
             /* Is blink */
             memcpy(target_eui, &recv_data[2], 8);
             transmitRangingInitiation();
-            noteActivity();
             return;
         }
 

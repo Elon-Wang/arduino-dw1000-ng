@@ -54,9 +54,7 @@ byte anchor_address[2];
 uint64_t timePollSent;
 uint64_t timePollAckReceived;
 uint64_t timeRangeSent;
-// watchdog and reset period
-uint32_t lastActivity;
-uint32_t resetPeriod = 250;
+
 // reply times (same on both sides for symm. ranging)
 uint16_t replyDelayTimeUS = 3000;
 
@@ -127,19 +125,12 @@ void setup() {
     DW1000Ng::attachReceivedHandler(handleReceived);
     // anchor starts by transmitting a POLL message
     transmitBlink();
-    noteActivity();
-}
-
-void noteActivity() {
-    // update activity timestamp, so that we do not reach "resetPeriod"
-    lastActivity = millis();
 }
 
 void reset() {
     // tag returns to Idle and sends POLL
     DW1000Ng::forceTRxOff();
     transmitBlink();
-    noteActivity();
 }
 
 void handleSent() {
@@ -193,13 +184,6 @@ void transmitFinalMessage() {
 }
 
 void loop() {
-    if (!sentAck && !receivedAck) {
-        // check if inactive
-        if (millis() - lastActivity > resetPeriod) {
-            reset();
-        }
-        return;
-    }
 
     if (sentAck) {
         sentAck = false;
@@ -220,13 +204,11 @@ void loop() {
                 timePollSent = DW1000Ng::getTransmitTimestamp();
                 timePollAckReceived = DW1000Ng::getReceiveTimestamp();
                 transmitFinalMessage();
-                noteActivity();
                 return;
             } else if (recv_data[10] == RANGING_CONFIRM) {
                 /* Received ranging confirm */
                 memcpy(anchor_address, &recv_data[11], 2);
                 transmitPoll();
-                noteActivity();
                 return;
             } else {
                 reset();
@@ -238,7 +220,6 @@ void loop() {
             DW1000Ng::setDeviceAddress(DW1000NgUtils::bytesAsValue(&recv_data[16], 2));
             memcpy(anchor_address, &recv_data[13], 2);
             transmitPoll();
-            noteActivity();
             return;
         }
     }
