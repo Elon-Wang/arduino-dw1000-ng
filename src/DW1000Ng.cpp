@@ -104,7 +104,11 @@ namespace DW1000Ng {
 		uint16_t		_antennaRxDelay = 0;
 
 		/* SPI relative variables */
+		#if defined(ESP32) || defined(ESP8266)
+		const SPISettings  _fastSPI = SPISettings(20000000L, MSBFIRST, SPI_MODE0);
+		#else
 		const SPISettings  _fastSPI = SPISettings(16000000L, MSBFIRST, SPI_MODE0);
+		#endif
 		const SPISettings  _slowSPI = SPISettings(2000000L, MSBFIRST, SPI_MODE0);
 		const SPISettings* _currentSPI = &_fastSPI;
 
@@ -1223,8 +1227,8 @@ namespace DW1000Ng {
 		attachInterrupt(digitalPinToInterrupt(_irq), pollForEvents, RISING);
 		select();
 		// reset chip (either soft or hard)
-		
-		softwareReset();
+
+		reset();
 		
 		_enableClock(SYS_XTI_CLOCK);
 		delay(5);
@@ -1254,7 +1258,9 @@ namespace DW1000Ng {
 	}
 
 	void select() {
+		#if !defined(ESP32) && !defined(ESP8266)
 		SPI.usingInterrupt(digitalPinToInterrupt(_irq));
+		#endif
 		pinMode(_ss, OUTPUT);
 		digitalWrite(_ss, HIGH);
 	}
@@ -1410,7 +1416,7 @@ namespace DW1000Ng {
 
 	void softwareReset() {
 		/* Sets SYS_XTI_CLOCK and write PMSC to all zero */
-		_disableSequencing(); 
+		_disableSequencing();
 		/* Clear AON and WakeUp configuration */
 		_writeToRegister(AON, AON_WCFG_SUB, 0x00, LEN_AON_WCFG);
 		_writeToRegister(AON, AON_CFG0_SUB, 0x00, LEN_AON_CFG0);
@@ -1571,16 +1577,16 @@ namespace DW1000Ng {
 		_readBytes(EUI, NO_SUB, eui, LEN_EUI);
 	}
 
-	void getTemperature(float& temp) {
+	float getTemperature() {
 		_vbatAndTempSteps();
 		byte sar_ltemp = 0; _readBytes(TX_CAL, 0x04, &sar_ltemp, 1);
-		temp = (sar_ltemp - _tmeas23C) * 1.14f + 23.0f;
+		return (sar_ltemp - _tmeas23C) * 1.14f + 23.0f;
 	}
 
-	void getBatteryVoltage(float& vbat) {
+	float getBatteryVoltage() {
 		_vbatAndTempSteps();
 		byte sar_lvbat = 0; _readBytes(TX_CAL, 0x03, &sar_lvbat, 1);
-		vbat = (sar_lvbat - _vmeas3v3) / 173.0f + 3.3f;
+		return (sar_lvbat - _vmeas3v3) / 173.0f + 3.3f;
 	}
 
 	void getTemperatureAndBatteryVoltage(float& temp, float& vbat) {
