@@ -233,6 +233,26 @@ namespace DW1000Ng {
 			// end read mode
 			_writeByte(OTP_IF, OTP_CTRL_SUB, 0x00);
 		}
+
+		void _writeBitToRegister(byte bitRegister, uint16_t RegisterOffset, uint16_t bitRegister_LEN, uint16_t selectedBit, boolean value) {
+			uint16_t idx;
+			uint8_t bitPosition;
+
+			idx = selectedBit/8;
+			if(idx >= bitRegister_LEN) {
+				return; // TODO proper error handling: out of bounds
+			}
+			byte targetByte; memset(&targetByte, 0, 1);
+			bitPosition = selectedBit%8;
+			_readBytes(bitRegister, RegisterOffset+idx, &targetByte, 1);
+			
+			value ? bitSet(targetByte, bitPosition) : bitClear(targetByte, bitPosition);
+
+			if(RegisterOffset == NO_SUB)
+				RegisterOffset = 0x00;
+				
+			_writeBytesToRegister(bitRegister, RegisterOffset+idx, &targetByte, 1);
+		}
 		
 		/* Steps used to get Temp and Voltage */
 		void _vbatAndTempSteps() {
@@ -1123,12 +1143,10 @@ namespace DW1000Ng {
 		}
 
 		void _resetReceiver() {
-			byte pmscctrl0[LEN_PMSC_CTRL0];
-			_readBytes(PMSC, PMSC_CTRL0_SUB, pmscctrl0, LEN_PMSC_CTRL0);
-			pmscctrl0[3] = 0xE0;
-			_writeBytesToRegister(PMSC, PMSC_CTRL0_SUB, pmscctrl0, LEN_PMSC_CTRL0);
-			pmscctrl0[3] = 0xF0;
-			_writeBytesToRegister(PMSC, PMSC_CTRL0_SUB, pmscctrl0, LEN_PMSC_CTRL0);
+			/* Set to 0 only bit 28 */
+			_writeToRegister(PMSC, PMSC_SOFTRESET_SUB, 0xE0, LEN_PMSC_SOFTRESET);
+			/* Set SOFTRESET to all ones */
+			_writeToRegister(PMSC, PMSC_SOFTRESET_SUB, 0xF0, LEN_PMSC_SOFTRESET);
 		}
 
 		/* Internal helpers to read configuration */
@@ -1224,7 +1242,8 @@ namespace DW1000Ng {
 		// pin and basic member setup
 		// attach interrupt
 		// TODO throw error if pin is not a interrupt pin
-		attachInterrupt(digitalPinToInterrupt(_irq), pollForEvents, RISING);
+		if(_irq != 0xff)
+			attachInterrupt(digitalPinToInterrupt(_irq), interruptServiceRoutine, RISING);
 		select();
 		// reset chip (either soft or hard)
 
@@ -1257,9 +1276,14 @@ namespace DW1000Ng {
 		_writeToRegister(AON, AON_CFG1_SUB, 0x00, LEN_AON_CFG1);
 	}
 
+	void initializeNoInterrupt(uint8_t ss, uint8_t rst) {
+		initialize(ss, 0xff, rst);
+	}
+
 	void select() {
 		#if !defined(ESP32) && !defined(ESP8266)
-		SPI.usingInterrupt(digitalPinToInterrupt(_irq));
+		if(_irq != 0xff)
+			SPI.usingInterrupt(digitalPinToInterrupt(_irq));
 		#endif
 		pinMode(_ss, OUTPUT);
 		digitalWrite(_ss, HIGH);
@@ -1294,7 +1318,7 @@ namespace DW1000Ng {
 		_handleReceiveTimestampAvailable = handleReceiveTimestampAvailable;
 	}
 
-	void pollForEvents() {
+	void interruptServiceRoutine() {
 		// read current status and handle via callbacks
 		_readSystemEventStatusRegister();
 		if(_isClockProblem() /* TODO and others */ && _handleError != 0) {
@@ -1327,6 +1351,46 @@ namespace DW1000Ng {
 			if(_handleReceived != nullptr)
 				(*_handleReceived)();
 		}
+	}
+
+	boolean isTransmitDone(){
+		_readSystemEventStatusRegister();
+		return _isTransmitDone();
+	}
+
+	void clearTransmitStatus() {
+		_clearTransmitStatus();
+	}
+
+	boolean isReceiveDone() {
+		_readSystemEventStatusRegister();
+		return _isReceiveDone();
+	}
+
+	void clearReceiveStatus() {
+		_clearReceiveStatus();
+	}
+
+	boolean isReceiveFailed() {
+		_readSystemEventStatusRegister();
+		return _isReceiveFailed();
+	}
+
+	void clearReceiveFailedStatus() {
+		_clearReceiveFailedStatus();
+		forceTRxOff();
+		_resetReceiver();
+	}
+
+	boolean isReceiveTimeout() {
+		_readSystemEventMaskRegister();
+		return _isReceiveTimeout();
+	}
+
+	void clearReceiveTimeoutStatus() {
+		_clearReceiveTimeoutStatus();
+		forceTRxOff();
+		_resetReceiver();
 	}
 
 	void enableDebounceClock() {
@@ -1415,21 +1479,17 @@ namespace DW1000Ng {
 	}
 
 	void softwareReset() {
-		/* Sets SYS_XTI_CLOCK and write PMSC to all zero */
+		/* Disable sequencing and go to state "INIT" - (a) Sets SYSCLKS to 01 */
 		_disableSequencing();
 		/* Clear AON and WakeUp configuration */
 		_writeToRegister(AON, AON_WCFG_SUB, 0x00, LEN_AON_WCFG);
 		_writeToRegister(AON, AON_CFG0_SUB, 0x00, LEN_AON_CFG0);
 		_writeToRegister(AON, AON_CTRL_SUB, 0x02, LEN_AON_CTRL);
-		/* Reset TX,RX and PMSC */
-		byte pmscctrl0[LEN_PMSC_CTRL0];
-		_readBytes(PMSC, PMSC_CTRL0_SUB, pmscctrl0, LEN_PMSC_CTRL0);
-		pmscctrl0[3] = 0x00;
-		_writeBytesToRegister(PMSC, PMSC_CTRL0_SUB, pmscctrl0, LEN_PMSC_CTRL0);
-		delay(5);
-		/* Reset to all one softwareReset. Clock remain to SYS_XTI_CLOCK */
-		pmscctrl0[3] = 0xF0;
-		_writeBytesToRegister(PMSC, PMSC_CTRL0_SUB, pmscctrl0, LEN_PMSC_CTRL0);
+		/* (b) Clear SOFTRESET to all zero’s */
+		_writeToRegister(PMSC, PMSC_SOFTRESET_SUB, 0x00, LEN_PMSC_SOFTRESET);
+		delay(1);
+		/* (c) Set SOFTRESET to all ones */
+		_writeToRegister(PMSC, PMSC_SOFTRESET_SUB, 0xF0, LEN_PMSC_SOFTRESET);
 	}
 
 	/* ###########################################################################
